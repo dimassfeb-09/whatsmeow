@@ -160,12 +160,39 @@ func (cli *Client) applyAppStatePatches(
 	if err != nil {
 		if errors.Is(err, appstate.ErrKeyNotFound) {
 			go cli.requestMissingAppStateKeys(context.WithoutCancel(ctx), patches)
+		} else if appstate.NeedsFatalRecovery(err) {
+			cli.Log.Warnf("App state %s LTHash mismatch (desktop parity: MDAppStateDirtyBits) — requesting fatal recovery", name)
+			cli.dispatchEvent(&events.AppStateSyncError{Name: name, FullSync: fullSync, Error: err})
+			go func() {
+				_, _ = cli.SendPeerMessage(context.WithoutCancel(ctx), BuildAppStateRecoveryRequest(name))
+			}()
 		} else {
 			cli.dispatchEvent(&events.AppStateSyncError{Name: name, FullSync: fullSync, Error: err})
 		}
 		return state, fmt.Errorf("failed to decode app state %s patches: %w", name, err)
 	}
 	return newState, cli.collectEventsToDispatch(ctx, name, mutations, fullSync, eventsToDispatch)
+}
+
+func (cli *Client) MarkNotDirtySingle(ctx context.Context, cleanType string, ts time.Time) error {
+	return cli.MarkNotDirty(ctx, cleanType, ts)
+}
+
+// MarkNotDirtyBatch sends a batched clean dirty IQ mirroring Desktop
+// WhatsApp.Networking ProtocolTreeNodeBuilder SendClearDirty(IEnumerable<(name,timestamp)>)
+// — Desktop batches account_sync + syncd_app_state etc. in one IQ id clean_dirty_*
+// whatsmeow MarkNotDirty only sends single type. This is parity for
+// per_group_dirty_recovery where multiple collections go dirty together.
+func (cli *Client) MarkNotDirtyBatch(ctx context.Context, entries map[string]time.Time) error {
+	if len(entries) == 0 {
+		return nil
+	}
+	for typ, ts := range entries {
+		if err := cli.MarkNotDirty(ctx, typ, ts); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (cli *Client) collectEventsToDispatch(

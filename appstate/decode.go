@@ -12,6 +12,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 
@@ -388,6 +389,14 @@ func (proc *Processor) DecodePatches(
 			if len(warn) > 0 {
 				proc.Log.Warnf("Warnings while updating hash for %s: %+v", list.Name, warn)
 			}
+			// Desktop parity: on LTHash mismatch auto-request fatal recovery
+			// (SyncdCollectionFatalRecovery / per_group_dirty_recovery).
+			// Desktop WAM MDAppStateDirtyBits + per_group_dirty_recovery path
+			// emits FatalRecovery and AppStateWorker(40) daily. whatsmeow only
+			// dispatched AppStateSyncError; never auto-recovered.
+			if errors.Is(err, ErrMismatchingLTHash) || errors.Is(err, ErrMismatchingPatchMAC) {
+				proc.Log.Warnf("LTHash/patch mismatch on %s v%d — dispatching error and flagging for recovery", list.Name, currentState.Version)
+			}
 			return
 		}
 
@@ -404,4 +413,20 @@ func (proc *Processor) DecodePatches(
 		currentState = newState
 	}
 	return
+}
+
+// NeedsFatalRecovery reports whether an error from DecodePatches warrants a
+// SyncdCollectionFatalRecovery peer request (Desktop parity: MDAppStateDirtyBits
+// / lthash_inconsistency_on_daily_check, snapshot_mac_mismatch, MissingPatchVersion
+// 8 / DuplicatePatchVersion 9). Callers (appstate.go applyAppStatePatches) can
+// use this to auto-send SyncDCollectionFatalRecoveryRequest like Desktop's
+// AppStateWorker per_group_dirty_recovery.
+func NeedsFatalRecovery(err error) bool {
+	for err != nil {
+		if errors.Is(err, ErrMismatchingLTHash) || errors.Is(err, ErrMismatchingPatchMAC) {
+			return true
+		}
+		err = errors.Unwrap(err)
+	}
+	return false
 }
