@@ -89,12 +89,19 @@ func (cli *Client) handleIB(ctx context.Context, node *waBinary.Node) {
 				Count: ag.Int("count"),
 			})
 		case "dirty":
-			//ts := ag.UnixTime("timestamp")
-			//typ := ag.String("type") // account_sync
-			//go func() {
-			//	err := cli.MarkNotDirty(ctx, typ, ts)
-			//	zerolog.Ctx(ctx).Debug().Err(err).Msg("Marked dirty item as clean")
-			//}()
+			// Desktop UWP marks account_sync dirty immediately with
+			// urn:xmpp:whatsapp:dirty clean IQ (see WhatsApp.Networking
+			// decompiled: ProtocolTreeNodeBuilder urn:xmpp:whatsapp:dirty).
+			// Upstream whatsmeow leaves this commented out; in desktop
+			// parity mode we mimic the Desktop so server sees the expected
+			// clean ack and doesn't keep pushing the same dirty.
+			if store.IsDesktopMode() {
+				ts := ag.UnixTime("timestamp")
+				typ := ag.String("type")
+				go func() {
+					_ = cli.MarkNotDirty(ctx, typ, ts)
+				}()
+			}
 		}
 	}
 }
