@@ -8,10 +8,14 @@ package whatsmeow
 
 import (
 	"context"
+	"crypto/sha256"
+	"io"
 
 	waBinary "go.mau.fi/whatsmeow/binary"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
+
+	"golang.org/x/crypto/hkdf"
 )
 
 func (cli *Client) handleCallEvent(ctx context.Context, node *waBinary.Node) {
@@ -119,4 +123,56 @@ func (cli *Client) RejectCall(ctx context.Context, callFrom types.JID, callID st
 		Attrs:   waBinary.Attrs{"id": cli.GenerateMessageID(), "from": ownID, "to": callFrom},
 		Content: []waBinary.Node{rejectNode},
 	})
+}
+
+// SendCallOffer sends a call offer (VoIP signaling parity: Desktop
+// WhatsAppNative.Voip.dll SendSignalingXmpp offer/accept). whatsmeow
+// only had RejectCall; add offer/accept/preaccept/transport/terminate
+// builders mirroring RejectCall so call signaling is XMPP-complete
+// without requiring native WebRTC/RTP (media stays native-only).
+func (cli *Client) SendCallOffer(ctx context.Context, to types.JID, callID string, data []waBinary.Node) error {
+	return cli.sendCallNode(ctx, to, "offer", callID, data)
+}
+func (cli *Client) SendCallAccept(ctx context.Context, to types.JID, callID string, data []waBinary.Node) error {
+	return cli.sendCallNode(ctx, to, "accept", callID, data)
+}
+func (cli *Client) SendCallPreAccept(ctx context.Context, to types.JID, callID string, data []waBinary.Node) error {
+	return cli.sendCallNode(ctx, to, "preaccept", callID, data)
+}
+func (cli *Client) SendCallTransport(ctx context.Context, to types.JID, callID string, data []waBinary.Node) error {
+	return cli.sendCallNode(ctx, to, "transport", callID, data)
+}
+func (cli *Client) SendCallTerminate(ctx context.Context, to types.JID, callID string, data []waBinary.Node) error {
+	return cli.sendCallNode(ctx, to, "terminate", callID, data)
+}
+func (cli *Client) sendCallNode(ctx context.Context, to types.JID, tag, callID string, data []waBinary.Node) error {
+	ownID := cli.getOwnID()
+	if ownID.IsEmpty() {
+		return ErrNotLoggedIn
+	}
+	ownID, to = ownID.ToNonAD(), to.ToNonAD()
+	node := waBinary.Node{
+		Tag:   tag,
+		Attrs: waBinary.Attrs{"call-id": callID, "call-creator": ownID},
+	}
+	if len(data) > 0 {
+		node.Content = data
+	}
+	return cli.sendNode(ctx, waBinary.Node{
+		Tag:   "call",
+		Attrs: waBinary.Attrs{"id": cli.GenerateMessageID(), "from": ownID, "to": to},
+		Content: []waBinary.Node{node},
+	})
+}
+
+// DeriveCallSRTPKeys mirrors Desktop Axolotl.CallKeysFromCipherKeyV2(jid, cipherKey)
+// → HkdfSha256 46 bytes: srtp[30] + p2p[16] (decompiled WhatsApp.Encryption.Axolotl).
+// Portable Go (no native) — useful for SRTP/p2p derivations without C++.
+func DeriveCallSRTPKeys(jid string, cipherKey []byte) (srtp, p2p []byte, err error) {
+	h := hkdf.New(sha256.New, cipherKey, nil, []byte(jid))
+	buf := make([]byte, 46)
+	if _, err = io.ReadFull(h, buf); err != nil {
+		return nil, nil, err
+	}
+	return buf[:30], buf[30:46], nil
 }
