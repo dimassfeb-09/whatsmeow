@@ -11,6 +11,7 @@ import (
 	"math/rand/v2"
 	"time"
 
+	"go.mau.fi/whatsmeow/store"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 )
@@ -23,6 +24,12 @@ var (
 	// KeepAliveIntervalMax specifies the maximum interval for websocket keepalive pings.
 	KeepAliveIntervalMax = 30 * time.Second
 
+	// Desktop-parity keepalive: WhatsApp Desktop UWP (WinUI 3, AppxManifest
+	// TargetDeviceFamily 10.0.19041) uses a tighter keepalive. When desktop mode
+	// is enabled we clamp to these values so server sees desktop-like pacing.
+	desktopKeepAliveMin = 15 * time.Second
+	desktopKeepAliveMax = 25 * time.Second
+
 	// KeepAliveMaxFailTime specifies the maximum time to wait before forcing a reconnect if keepalives fail repeatedly.
 	KeepAliveMaxFailTime = 3 * time.Minute
 )
@@ -31,7 +38,13 @@ func (cli *Client) keepAliveLoop(ctx, connCtx context.Context) {
 	lastSuccess := time.Now()
 	var errorCount int
 	for {
-		interval := rand.Int64N(KeepAliveIntervalMax.Milliseconds()-KeepAliveIntervalMin.Milliseconds()) + KeepAliveIntervalMin.Milliseconds()
+		minMs := KeepAliveIntervalMin.Milliseconds()
+		maxMs := KeepAliveIntervalMax.Milliseconds()
+		if store.IsDesktopMode() {
+			minMs = desktopKeepAliveMin.Milliseconds()
+			maxMs = desktopKeepAliveMax.Milliseconds()
+		}
+		interval := rand.Int64N(maxMs-minMs) + minMs
 		select {
 		case <-time.After(time.Duration(interval) * time.Millisecond):
 			isSuccess, shouldContinue := cli.sendKeepAlive(connCtx)

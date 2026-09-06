@@ -78,6 +78,15 @@ func (vc WAVersionContainer) ProtoAppVersion() *waWa6.ClientPayload_UserAgent_Ap
 // waVersion is the WhatsApp web client version
 var waVersion = WAVersionContainer{2, 3000, 1046691727}
 
+// waDesktopVersion is the WhatsApp Desktop (UWP/MSIX) version extracted from the
+// decompiled MSIX bundle: WhatsApp.Root_2.2634.101.0_x64.msix / AppxManifest.xml
+// Identity Version="2.2634.101.0" Publisher CN=24803D75-212C-471A-BC57-9EF86AB91435
+// TargetDeviceFamily MinVersion=10.0.19041.0
+var waDesktopVersion = WAVersionContainer{2, 2634, 101}
+
+// waDesktopBuildNumber is the Windows build from AppxManifest TargetDeviceFamily
+const waDesktopBuildNumber = "10.0.19041"
+
 // waVersionHash is the md5 hash of a dot-separated waVersion
 var waVersionHash = waVersion.Hash()
 
@@ -209,4 +218,81 @@ func (device *Device) GetClientPayload() *waWa6.ClientPayload {
 	} else {
 		return device.getRegistrationPayload()
 	}
+}
+
+// --- Desktop parity helpers (decompiled WhatsApp Desktop 2.2634.101.0) ---
+// AppxManifest: Identity 5319275A.WhatsAppDesktop Version 2.2634.101.0
+// TargetDeviceFamily Windows.Desktop MinVersion 10.0.19041.0
+// These helpers make whatsmeow present itself as the official UWP desktop client
+// instead of WEB. Wire protocol (Noise_XX + XMPP + libsignal) is identical; only
+// the ClientPayload/WebInfo/DeviceProps fingerprint changes.
+
+var desktopModeEnabled bool
+
+// GetDesktopVersion returns the decompiled Desktop MSIX version.
+func GetDesktopVersion() WAVersionContainer { return waDesktopVersion }
+
+// GetDesktopBuildNumber returns the Windows build from AppxManifest TargetDeviceFamily.
+func GetDesktopBuildNumber() string { return waDesktopBuildNumber }
+
+// IsDesktopMode reports whether desktop parity mode is enabled.
+func IsDesktopMode() bool { return desktopModeEnabled }
+
+// EnableDesktopMode switches global payloads to mimic WhatsApp Desktop UWP.
+// Call this once before Connect()/GetQRChannel() if you want UWP fingerprint.
+// Sources: AppxManifest.xml + WhatsAppNative.dll Curve25519/UWP DeviceProps.
+// Also tunes HistorySyncConfig to desktop-like values so the initial
+// md-msg-hist / md-app-state sync looks like WinUI's HistorySync bootstrap
+// (full sync capability, on-demand ready, thumbnail sync etc.).
+func EnableDesktopMode() {
+	waVersion = waDesktopVersion
+	waVersionHash = waVersion.Hash()
+	BaseClientPayload.UserAgent.Platform = waWa6.ClientPayload_UserAgent_WINDOWS.Enum()
+	BaseClientPayload.UserAgent.ReleaseChannel = waWa6.ClientPayload_UserAgent_RELEASE.Enum()
+	BaseClientPayload.UserAgent.AppVersion = waVersion.ProtoAppVersion()
+	BaseClientPayload.UserAgent.OsVersion = proto.String(waDesktopBuildNumber)
+	BaseClientPayload.UserAgent.OsBuildNumber = proto.String(waDesktopBuildNumber)
+	BaseClientPayload.UserAgent.Manufacturer = proto.String("WhatsApp Inc.")
+	BaseClientPayload.UserAgent.Device = proto.String("Desktop")
+	BaseClientPayload.WebInfo.WebSubPlatform = waWa6.ClientPayload_WebInfo_WIN_STORE.Enum()
+	DeviceProps.PlatformType = waCompanionReg.DeviceProps_UWP.Enum()
+	DeviceProps.Os = proto.String("Windows")
+	if DeviceProps.Version == nil {
+		DeviceProps.Version = &waCompanionReg.DeviceProps_AppVersion{}
+	}
+	DeviceProps.Version.Primary = proto.Uint32(waDesktopVersion[0])
+	DeviceProps.Version.Secondary = proto.Uint32(waDesktopVersion[1])
+	DeviceProps.Version.Tertiary = proto.Uint32(waDesktopVersion[2])
+	// Desktop WinUI negotiates full history sync (on-demand + guest + add-on).
+	// whatsmeow leaves several of these nil/false → server treats client as
+	// limited. In desktop mode we advertise full capability like the MSIX.
+	hsc := DeviceProps.HistorySyncConfig
+	if hsc == nil {
+		hsc = &waCompanionReg.DeviceProps_HistorySyncConfig{}
+		DeviceProps.HistorySyncConfig = hsc
+	}
+	hsc.OnDemandReady = proto.Bool(true)
+	hsc.CompleteOnDemandReady = proto.Bool(true)
+	hsc.SupportGuestChat = proto.Bool(true)
+	hsc.SupportAddOnHistorySyncMigration = proto.Bool(true)
+	// Desktop fetches more initial history than the minimal whatsmeow defaults.
+	if hsc.InitialSyncMaxMessagesPerChat == nil {
+		hsc.InitialSyncMaxMessagesPerChat = proto.Uint32(50)
+	}
+	if hsc.RecentSyncDaysLimit == nil {
+		hsc.RecentSyncDaysLimit = proto.Uint32(3)
+	}
+	// Thumbnail + full sync limits — desktop has larger quota / window.
+	if hsc.FullSyncDaysLimit == nil {
+		hsc.FullSyncDaysLimit = proto.Uint32(60)
+	}
+	desktopModeEnabled = true
+}
+
+// DisableDesktopMode reverts to the default WEB fingerprint.
+func DisableDesktopMode() {
+	desktopModeEnabled = false
+	// Caller should restart process or call SetWAVersion(default) to fully revert;
+	// we intentionally do not auto-revert global BaseClientPayload here to avoid
+	// surprising callers mid-session.
 }
