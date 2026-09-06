@@ -244,6 +244,18 @@ func IsDesktopMode() bool { return desktopModeEnabled }
 // Also tunes HistorySyncConfig to desktop-like values so the initial
 // md-msg-hist / md-app-state sync looks like WinUI's HistorySync bootstrap
 // (full sync capability, on-demand ready, thumbnail sync etc.).
+//
+// Deep-scan note (695K lines, 2026-09-07): whatsmeow proto is NEWER than the
+// decompiled Desktop dump (2.2634.101.0). Desktop has only ClientPayload tags
+// 1-41, UserAgent fields 1-13, HistorySyncConfig 1-12; whatsmeow adds
+// tags 42-48 (accountType/connectionSequenceInfo/paaLink/preacksCount/
+// processingQueueSize/pairedPeripherals/testIsolationID), UserAgent 14-17
+// (deviceExpID/deviceType/deviceModelType/distributionChannel), Handshake PQ
+// 10-field XXKEM etc. If we spoof old desktop version but send new fields,
+// server fingerprints mismatch. So in desktop mode we explicitly strip the
+// superset tags to look like the old UWP binary's Serialize (decompiled.cs:
+// 278194 lidDbMigrated(41) max). Handshake is kept minimal (3-field) to match
+// Desktop 2.2634.101 which has no PQ/KEM. Call DisableDesktopMode to revert.
 func EnableDesktopMode() {
 	waVersion = waDesktopVersion
 	waVersionHash = waVersion.Hash()
@@ -255,6 +267,22 @@ func EnableDesktopMode() {
 	BaseClientPayload.UserAgent.Manufacturer = proto.String("WhatsApp Inc.")
 	BaseClientPayload.UserAgent.Device = proto.String("Desktop")
 	BaseClientPayload.WebInfo.WebSubPlatform = waWa6.ClientPayload_WebInfo_WIN_STORE.Enum()
+	// Strip whatsmeow-superset UserAgent fields so wire looks like Desktop decompiled.cs:275645 (only 1-13)
+	BaseClientPayload.UserAgent.DeviceExpID = nil
+	BaseClientPayload.UserAgent.DeviceType = nil
+	BaseClientPayload.UserAgent.DeviceModelType = nil
+	BaseClientPayload.UserAgent.DistributionChannel = nil
+	// Strip WebInfo browser fingerprint (whatsmeow adds 5-6, Desktop decompiled.cs:276667 only 1-4)
+	BaseClientPayload.WebInfo.Browser = nil
+	BaseClientPayload.WebInfo.BrowserVersion = nil
+	// Strip ClientPayload superset tags 42-48 (WAWebProtobufsWa6.proto:295) — Desktop ends at 41
+	BaseClientPayload.AccountType = nil
+	BaseClientPayload.ConnectionSequenceInfo = nil
+	BaseClientPayload.PaaLink = nil
+	BaseClientPayload.PreacksCount = nil
+	BaseClientPayload.ProcessingQueueSize = nil
+	BaseClientPayload.PairedPeripherals = nil
+	BaseClientPayload.TestIsolationID = nil
 	DeviceProps.PlatformType = waCompanionReg.DeviceProps_UWP.Enum()
 	DeviceProps.Os = proto.String("Windows")
 	if DeviceProps.Version == nil {
