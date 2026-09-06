@@ -88,6 +88,18 @@ func (cli *Client) handleIB(ctx context.Context, node *waBinary.Node) {
 			cli.dispatchEvent(&events.OfflineSyncCompleted{
 				Count: ag.Int("count"),
 			})
+		case "offline_batch":
+			// Desktop parity: WhatsApp.Networking expects IB offline_batch
+			// (secondary dict 022). whatsmeow only handled offline_preview +
+			// offline; offline_batch was dropped. Treat like offline — batch
+			// of offline msgs (WhatsApp.Core Ordered vs Unordered payload).
+			cli.dispatchEvent(&events.OfflineSyncCompleted{
+				Count: ag.Int("count"),
+			})
+			// edge_routing / w:stats / w:sync tokens are defined in
+			// binary/token/token.go (parity ok) but no IQ is ever sent.
+			// Desktop doesn't poll them either unless foreground sync;
+			// leaving as no-op is server-indistinguishable for non-blast.
 		case "dirty":
 			// Desktop UWP marks account_sync dirty immediately with
 			// urn:xmpp:whatsapp:dirty clean IQ (see WhatsApp.Networking
