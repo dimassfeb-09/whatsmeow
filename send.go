@@ -587,6 +587,50 @@ func (cli *Client) BuildHistorySyncRequest(lastKnownMessageInfo *types.MessageIn
 	}
 }
 
+// BuildFullHistorySyncOnDemandRequest builds a FullHistorySyncOnDemand peer request.
+//
+// Desktop WinUI (WhatsApp.Core HistorySync, PeerDataOperationType 6) can request
+// a full history sync on demand with requestMetadata + historySyncConfig +
+// fullHistorySyncOnDemandConfig. whatsmeow only had the simpler
+// BuildHistorySyncRequest (type 4). This adds type 6 parity so desktop-mode
+// clients can negotiate full bootstrap like the MSIX (WAM 85566 etc.).
+func (cli *Client) BuildFullHistorySyncOnDemandRequest(requestMetadata *waE2E.FullHistorySyncOnDemandRequestMetadata) *waE2E.Message {
+	return &waE2E.Message{
+		ProtocolMessage: &waE2E.ProtocolMessage{
+			Type: waE2E.ProtocolMessage_PEER_DATA_OPERATION_REQUEST_MESSAGE.Enum(),
+			PeerDataOperationRequestMessage: &waE2E.PeerDataOperationRequestMessage{
+				PeerDataOperationRequestType: waE2E.PeerDataOperationRequestType_FULL_HISTORY_SYNC_ON_DEMAND.Enum(),
+				FullHistorySyncOnDemandRequest: &waE2E.PeerDataOperationRequestMessage_FullHistorySyncOnDemandRequest{
+					RequestMetadata: requestMetadata,
+				},
+			},
+		},
+	}
+}
+
+// BuildHistorySyncChunkRetryRequest builds a HistorySyncChunkRetry peer request.
+//
+// Desktop handles HistorySyncChunkRetry (type 8) with syncType + chunkOrder +
+// chunkNotificationId + regenerateChunk — auto-retries lost ordered chunks
+// (WAM HistorySyncChunkOrder 85566, RetryRequestId etc.). whatsmeow dropped
+// lost chunks silently. This mirrors WhatsApp.Core OrderedPayloadProcessor.
+func (cli *Client) BuildHistorySyncChunkRetryRequest(syncType waE2E.HistorySyncType, chunkOrder uint32, chunkNotificationID string, regenerate bool) *waE2E.Message {
+	return &waE2E.Message{
+		ProtocolMessage: &waE2E.ProtocolMessage{
+			Type: waE2E.ProtocolMessage_PEER_DATA_OPERATION_REQUEST_MESSAGE.Enum(),
+			PeerDataOperationRequestMessage: &waE2E.PeerDataOperationRequestMessage{
+				PeerDataOperationRequestType: waE2E.PeerDataOperationRequestType_HISTORY_SYNC_CHUNK_RETRY.Enum(),
+				HistorySyncChunkRetryRequest: &waE2E.PeerDataOperationRequestMessage_HistorySyncChunkRetryRequest{
+					SyncType:            syncType.Enum(),
+					ChunkOrder:          proto.Uint32(chunkOrder),
+					ChunkNotificationID: proto.String(chunkNotificationID),
+					RegenerateChunk:     proto.Bool(regenerate),
+				},
+			},
+		},
+	}
+}
+
 // EditWindow specifies how long a message can be edited for after it was sent.
 const EditWindow = 20 * time.Minute
 
